@@ -69,7 +69,6 @@ jobs:
         <?xml version="1.0" encoding="UTF-8"?>
         <manifest>
           <remote fetch="https://git.codelinaro.org/clo/la" name="caf" review="codeaurora.org"/>
-          <default remote="caf" revision="kernel.build.lnx.1.0" sync-j="8"/>
           <remote fetch="https://github.com/OnePlusOSS" name="origin"/>
           <project remote="origin" name="android_kernel_common_oneplus_sm8450" path="kernel_platform/common" revision="oneplus/sm8450_t_13.0_10pro"/>
           <project remote="origin" name="android_kernel_oneplus_sm8450" path="kernel_platform/msm-kernel" revision="oneplus/sm8450_t_13.0_10pro">
