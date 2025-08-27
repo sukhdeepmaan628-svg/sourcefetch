@@ -64,6 +64,7 @@ jobs:
     - name: Create custom manifest
       run: |
         cd oneplus
+        mkdir -p .repo/local_manifests
         cat > .repo/local_manifests/oneplus.xml << 'EOF'
         <?xml version="1.0" encoding="UTF-8"?>
         <manifest>
@@ -86,11 +87,7 @@ jobs:
           <project remote="caf" name="kernelplatform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" path="kernel_platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" revision="c9f87ae369034b4942536a1c5bd62e4cd1d828e3" upstream="ks-kernel.lnx.1.0.r1-rel"/>
         </manifest>
         EOF
-        
-    - name: Create local manifests directory
-      run: |
-        cd oneplus
-        mkdir -p .repo/local_manifests
+
         
     - name: Sync repositories
       run: |
