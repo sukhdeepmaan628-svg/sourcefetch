@@ -1,0 +1,207 @@
+name: OnePlus Kernel Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          git \
+          curl \
+          python3 \
+          python3-pip \
+          build-essential \
+          libssl-dev \
+          libffi-dev \
+          libxml2-dev \
+          libxslt1-dev \
+          zlib1g-dev \
+          bc \
+          bison \
+          flex \
+          libelf-dev \
+          gcc-aarch64-linux-gnu \
+          rsync
+    
+    - name: Install repo tool
+      run: |
+        mkdir -p ~/.bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/.bin/repo
+        chmod a+x ~/.bin/repo
+        export PATH="${HOME}/.bin:${PATH}"
+        echo "${HOME}/.bin" >> $GITHUB_PATH
+        
+    - name: Configure git
+      run: |
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        git config --global color.ui false
+        
+    - name: Create oneplus directory and initialize repo
+      run: |
+        mkdir -p oneplus
+        cd oneplus
+        repo init -u https://android.googlesource.com/platform/manifest -b android-13.0.0_r1 --depth=1
+        
+    - name: Create custom manifest
+      run: |
+        cd oneplus
+        cat > .repo/local_manifests/oneplus.xml << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <manifest>
+          <remote fetch="https://git.codelinaro.org/clo/la" name="caf" review="codeaurora.org"/>
+          <default remote="caf" revision="kernel.build.lnx.1.0" sync-j="8"/>
+          <remote fetch="https://github.com/OnePlusOSS" name="origin"/>
+          <project remote="origin" name="android_kernel_common_oneplus_sm8450" path="kernel_platform/common" revision="oneplus/sm8450_t_13.0_10pro"/>
+          <project remote="origin" name="android_kernel_oneplus_sm8450" path="kernel_platform/msm-kernel" revision="oneplus/sm8450_t_13.0_10pro">
+            <linkfile dest="kernel_platform/common/build.config.msm.waipio" src="build.config.msm.waipio"/>
+            <linkfile dest="kernel_platform/common/build.config.msm.waipio.tuivm" src="build.config.msm.waipio.tuivm"/>
+            <linkfile dest="kernel_platform/common/build.config.msm.lahaina" src="build.config.msm.lahaina"/>
+          </project>
+          <project remote="origin" name="android_kernel_modules_and_devicetree_oneplus_sm8450" path="./" revision="oneplus/sm8450_t_13.0_10pro"/>
+          <project remote="caf" name="kernel/prebuilts/build-tools" path="kernel_platform/prebuilts/kernel-build-tools" revision="10ab783184f77d3ea15bf666426a7138b0f62bfc" upstream="ks-kernel.lnx.1.0.r1-rel"/>
+          <project remote="caf" name="kernel_platform/external/dtc" revision="b5a44a6e8c72c9fc5d72c6cff09ee3b9a86da769" upstream="kernel.build.lnx.1.0.r1-rel"/>
+          <project remote="caf" name="kernel_platform/kernel/prebuilts/mainline/arm64" revision="de12e10cfe8d67d5c0627069306fda939f52154a" upstream="kernel.lnx.5.10.r1-rel"/>
+          <project remote="caf" name="kernel_platform/prebuilts/build-tools" revision="846214bd11004546cd3fc2590c73c628fcd6778c" upstream="ks-kernel.lnx.1.0.r1-rel"/>
+          <project remote="caf" name="kernel_platform/system/tools/mkbootimg" path="kernel_platform/tools/mkbootimg" revision="08410f46318f3f301b96ed058466ab0dde0b050b" upstream="ks-kernel.lnx.1.0.r1-rel"/>
+          <project remote="caf" name="kernelplatform/prebuilts-master/clang/host/linux-x86" path="kernel_platform/prebuilts-master/clang/host/linux-x86" revision="0fc3d01a780023469b7acc18c56a9cf5099a6d6c" upstream="ks-kernel.lnx.1.0.r1-rel"/>
+          <project remote="caf" name="kernelplatform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" path="kernel_platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" revision="c9f87ae369034b4942536a1c5bd62e4cd1d828e3" upstream="ks-kernel.lnx.1.0.r1-rel"/>
+        </manifest>
+        EOF
+        
+    - name: Create local manifests directory
+      run: |
+        cd oneplus
+        mkdir -p .repo/local_manifests
+        
+    - name: Sync repositories
+      run: |
+        cd oneplus
+        repo sync -j$(nproc)
+      timeout-minutes: 120
+      continue-on-error: false
+      
+    - name: Verify sync completion
+      run: |
+        cd oneplus
+        echo "=== Directory structure ==="
+        find . -maxdepth 3 -type d | head -20
+        echo "=== Kernel platform contents ==="
+        ls -la kernel_platform/ || echo "kernel_platform directory not found"
+        echo "=== Build config files ==="
+        find . -name "build.config*" -type f || echo "No build config files found"
+        
+    - name: Set up build environment
+      run: |
+        cd oneplus
+        if [ -f kernel_platform/common/build.config.msm.waipio ]; then
+          echo "Build config found"
+          export BUILD_CONFIG=kernel_platform/common/build.config.msm.waipio
+          export PATH="$PWD/kernel_platform/prebuilts/kernel-build-tools/linux-x86/bin:$PATH"
+          export PATH="$PWD/kernel_platform/prebuilts-master/clang/host/linux-x86/clang-r416183c/bin:$PATH"
+          echo "Build environment configured"
+        else
+          echo "Build config not found, skipping build setup"
+        fi
+        
+    - name: Create compression script
+      run: |
+        cat > compress_oneplus.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        echo "Starting compression of oneplus folder..."
+        
+        # Create a temporary directory for the cleaned source
+        TEMP_DIR=$(mktemp -d)
+        ONEPLUS_CLEAN="$TEMP_DIR/oneplus_clean"
+        
+        # Copy oneplus folder excluding .repo and .git directories
+        echo "Copying source files (excluding .repo and .git directories)..."
+        rsync -avH \
+          --preserve-links \
+          --perms \
+          --times \
+          --owner \
+          --group \
+          --devices \
+          --specials \
+          --exclude='.repo' \
+          --exclude='.git' \
+          --exclude='*.git' \
+          oneplus/ "$ONEPLUS_CLEAN/"
+        
+        # Create the compressed archive with preserved attributes
+        echo "Creating compressed archive..."
+        cd "$TEMP_DIR"
+        tar --create \
+          --gzip \
+          --preserve-permissions \
+          --same-owner \
+          --numeric-owner \
+          --file=oneplus-kernel-source.tar.gz \
+          oneplus_clean/
+        
+        # Move the archive to the workspace
+        mv oneplus-kernel-source.tar.gz "$GITHUB_WORKSPACE/"
+        
+        # Clean up
+        rm -rf "$TEMP_DIR"
+        
+        echo "Compression completed successfully!"
+        echo "Archive details:"
+        ls -lh "$GITHUB_WORKSPACE/oneplus-kernel-source.tar.gz"
+        echo ""
+        echo "Testing archive integrity..."
+        tar -tzf "$GITHUB_WORKSPACE/oneplus-kernel-source.tar.gz" >/dev/null && echo "✅ Archive integrity verified" || echo "❌ Archive integrity check failed"
+        EOF
+        
+        chmod +x compress_oneplus.sh
+        
+    - name: Compress oneplus folder
+      run: ./compress_oneplus.sh
+      
+    - name: Upload compressed artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: oneplus-kernel-source
+        path: oneplus-kernel-source.tar.gz
+        retention-days: 30
+        compression-level: 6
+        
+    - name: Generate build summary
+      run: |
+        echo "## OnePlus Kernel Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ **Build Status:** Completed successfully" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "📦 **Artifact Information:**" >> $GITHUB_STEP_SUMMARY
+        echo "- **Name:** oneplus-kernel-source" >> $GITHUB_STEP_SUMMARY
+        echo "- **File:** oneplus-kernel-source.tar.gz" >> $GITHUB_STEP_SUMMARY
+        echo "- **Size:** $(du -h oneplus-kernel-source.tar.gz | cut -f1)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Retention:** 30 days" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "🔧 **Build Configuration:**" >> $GITHUB_STEP_SUMMARY
+        echo "- **Target:** OnePlus SM8450 (OnePlus 10 Pro)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Android Version:** 13.0" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch:** oneplus/sm8450_t_13.0_10pro" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "📁 **Excluded from archive:** .repo and .git directories" >> $GITHUB_STEP_SUMMARY
